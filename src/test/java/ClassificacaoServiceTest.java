@@ -1,5 +1,6 @@
 
 import com.giaccneto.triagem_suporte.TriagemSuporteApplication;
+import com.giaccneto.triagem_suporte.dto.ClassificacaoResposta;
 import org.springframework.boot.test.context.SpringBootTest;
 import com.giaccneto.triagem_suporte.service.ClassificacaoService;
 import org.junit.jupiter.api.Test;
@@ -17,9 +18,11 @@ public class ClassificacaoServiceTest {
 
         String mensagem = "Fui cobrado duas vezes pela mesma compra.";
 
-        String resposta = classificacaoService.classificar(mensagem);
+        ClassificacaoResposta resposta = classificacaoService.classificar(mensagem);
 
-        System.out.println("Resposta da IA: " + resposta);
+        System.out.println("Categoria: " + resposta.getCategoria());
+        System.out.println("Prioridade: " + resposta.getPrioridade());
+        System.out.println("Equipe: " + resposta.getEquipeDestino());
     }
 
 

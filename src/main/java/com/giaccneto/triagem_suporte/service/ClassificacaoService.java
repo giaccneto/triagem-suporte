@@ -1,5 +1,6 @@
 package com.giaccneto.triagem_suporte.service;
 
+import com.giaccneto.triagem_suporte.dto.ClassificacaoResposta;
 import com.giaccneto.triagem_suporte.tool.PoliticasTool;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
@@ -14,7 +15,7 @@ public class ClassificacaoService {
         this.politicasTool = politicasTool;
         this.chatClient = builder.build();
         }
-        public String classificar(String mensagem) {
+        public ClassificacaoResposta classificar(String mensagem) {
 
         return chatClient.prompt()
                 .system("""
@@ -29,7 +30,7 @@ public class ClassificacaoService {
                 .user(mensagem)
                 .tools(politicasTool)
                 .call()
-                .content();
+                .entity(ClassificacaoResposta.class);
 
 
     }
