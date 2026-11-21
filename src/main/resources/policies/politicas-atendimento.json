@@ -1,0 +1,41 @@
+
+{
+  "categorias": [
+    {
+      "codigo": "COBRANCA",
+      "descricao": "Problemas relacionados a pagamentos, faturas, cobranças e valores cobrados incorretamente.",
+      "equipeDestino": "FINANCEIRO"
+    },
+    {
+      "codigo": "PROBLEMA_TECNICO",
+      "descricao": "Falhas no aplicativo, erros de sistema, problemas de acesso e indisponibilidade do produto.",
+      "equipeDestino": "TECNICO"
+    },
+    {
+      "codigo": "OUTRO",
+      "descricao": "Solicitações que não pertencem às categorias de cobrança ou problema técnico.",
+      "equipeDestino": "REVISAO_HUMANA"
+    }
+  ],
+  "prioridades": [
+    {
+      "codigo": "ALTA",
+      "regra": "Indisponibilidade confirmada que impede o cliente de utilizar o produto."
+    },
+    {
+      "codigo": "NORMAL",
+      "regra": "Casos com informações suficientes para concluir que a condição de prioridade alta não se aplica."
+    }
+  ],
+  "revisaoHumana": {
+    "necessariaQuando": [
+      "Não houver informações suficientes para determinar a categoria.",
+      "Não houver informações suficientes para determinar a prioridade.",
+      "A classificação proposta pela IA for inválida.",
+      "A mensagem for ambígua e não permitir uma decisão segura."
+    ],
+    "status": "REVISAO_PENDENTE",
+    "equipeDestino": "REVISAO_HUMANA",
+    "prioridade": null
+  }
+}
