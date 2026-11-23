@@ -84,6 +84,10 @@ public class ChamadoService {
 
             return chamadoRepository.save(chamadoSalvo);
         }
+        System.out.println("Categoria IA: " + resposta.getCategoria());
+        System.out.println("Prioridade IA: " + resposta.getPrioridade());
+        System.out.println("Equipe IA: " + resposta.getEquipeDestino());
+        System.out.println("Revisão IA: " + resposta.getRevisaoNecessaria());
 
         // 3. Valida a resposta da IA
         boolean classificacaoValida =

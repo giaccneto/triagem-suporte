@@ -20,7 +20,7 @@ public class ChamadoController {
 
     @PostMapping
     public ResponseEntity<Chamado> criarChamado(@RequestBody Chamado chamado) {
-        Chamado chamadoSalvo = chamadoService.save(chamado);
+        Chamado chamadoSalvo = chamadoService.processarChamado(chamado);
         return ResponseEntity.status(CREATED).body(chamadoSalvo);
     }
 
