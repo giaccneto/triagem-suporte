@@ -1,16 +1,17 @@
+package com.giaccneto.triagem_suporte.service;
+
 import com.giaccneto.triagem_suporte.dto.ClassificacaoResposta;
 import com.giaccneto.triagem_suporte.model.Chamado;
 import com.giaccneto.triagem_suporte.model.StatusChamado;
 import com.giaccneto.triagem_suporte.repository.ChamadoRepository;
 
-import com.giaccneto.triagem_suporte.service.ChamadoService;
-import com.giaccneto.triagem_suporte.service.ClassificacaoService;
-import com.giaccneto.triagem_suporte.service.EncaminhamentoService;
-import com.giaccneto.triagem_suporte.service.ValidacaoClassificacaoService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
+import org.springframework.dao.DataIntegrityViolationException;
+import com.giaccneto.triagem_suporte.exception.ChamadoDuplicadoException;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.Optional;
@@ -28,8 +29,8 @@ class ChamadoServiceTest {
     @Mock
     private ClassificacaoService classificacaoService;
 
-    @Mock
-    private ValidacaoClassificacaoService validacaoClassificacaoService;
+    @Spy
+    private ValidacaoClassificacaoService validacaoClassificacaoService = new ValidacaoClassificacaoService();
 
     @Mock
     private EncaminhamentoService encaminhamentoService;
@@ -38,16 +39,7 @@ class ChamadoServiceTest {
     private ChamadoService chamadoService;
 
     private Chamado criarChamadoTeste(String ticketId) {
-
-        Chamado chamado = new Chamado();
-
-        chamado.setTicketId(ticketId);
-        chamado.setCustomerId("CLIENTE-TESTE");
-        chamado.setMessage(
-                "Preciso da segunda via da minha fatura."
-        );
-
-        return chamado;
+        return new Chamado(ticketId, "CLIENTE-TESTE", "Preciso da segunda via da minha fatura.");
     }
 
     private ClassificacaoResposta criarClassificacaoValida() {
@@ -85,8 +77,6 @@ class ChamadoServiceTest {
         when(classificacaoService.classificar(chamado.getMessage()))
                 .thenReturn(resposta);
 
-        when(validacaoClassificacaoService.validar(resposta))
-                .thenReturn(true);
 
         when(encaminhamentoService.encaminhar(any(Chamado.class)))
                 .thenThrow(new RuntimeException("Trello indisponível"));
@@ -117,8 +107,6 @@ class ChamadoServiceTest {
         when(classificacaoService.classificar(chamado.getMessage()))
                 .thenReturn(resposta);
 
-        when(validacaoClassificacaoService.validar(resposta))
-                .thenReturn(true);
 
         Chamado resultado = chamadoService.processarChamado(chamado);
 
@@ -144,8 +132,6 @@ class ChamadoServiceTest {
         when(classificacaoService.classificar(chamado.getMessage()))
                 .thenReturn(resposta);
 
-        when(validacaoClassificacaoService.validar(resposta))
-                .thenReturn(true);
 
         when(encaminhamentoService.encaminhar(any(Chamado.class)))
                 .thenReturn("CARTAO-TRELLO-123");
@@ -177,8 +163,7 @@ class ChamadoServiceTest {
         when(classificacaoService.classificar(chamado.getMessage()))
                 .thenReturn(resposta);
 
-        when(validacaoClassificacaoService.validar(resposta))
-                .thenReturn(false);
+        resposta.setEquipeDestino("TECNICO");
 
         Chamado resultado = chamadoService.processarChamado(chamado);
 
@@ -210,5 +195,62 @@ class ChamadoServiceTest {
 
         verify(encaminhamentoService, never())
                 .encaminhar(any(Chamado.class));
+    }
+
+    @Test
+    void deveEnviarParaRevisaoQuandoIaRetornaNull() {
+        Chamado chamado = criarChamadoTeste("TESTE-IA-NULL-001");
+        simularRepositorio(chamado.getTicketId());
+        when(classificacaoService.classificar(chamado.getMessage())).thenReturn(null);
+
+        Chamado resultado = chamadoService.processarChamado(chamado);
+
+        assertEquals(StatusChamado.REVISAO_PENDENTE, resultado.getStatus());
+        assertEquals(com.giaccneto.triagem_suporte.model.EquipeDestino.REVISAO_HUMANA,
+                resultado.getEquipeDestino());
+        verify(encaminhamentoService, never()).encaminhar(any(Chamado.class));
+    }
+
+    @Test
+    void deveMarcarFalhaSeIntegracaoNaoRetornarId() {
+        Chamado chamado = criarChamadoTeste("TESTE-ID-VAZIO-001");
+        ClassificacaoResposta resposta = criarClassificacaoValida();
+        simularRepositorio(chamado.getTicketId());
+        when(classificacaoService.classificar(chamado.getMessage())).thenReturn(resposta);
+        when(encaminhamentoService.encaminhar(any(Chamado.class))).thenReturn("");
+
+        Chamado resultado = chamadoService.processarChamado(chamado);
+
+        assertEquals(StatusChamado.FALHA_ENCAMINHAMENTO, resultado.getStatus());
+        assertNull(resultado.getIdExterno());
+    }
+
+    @Test
+    void devePreservarStatusIntermediarioAntesDoEncaminhamento() {
+        Chamado chamado = criarChamadoTeste("TESTE-ESTADO-001");
+        ClassificacaoResposta resposta = criarClassificacaoValida();
+        simularRepositorio(chamado.getTicketId());
+        when(classificacaoService.classificar(chamado.getMessage())).thenReturn(resposta);
+        when(encaminhamentoService.encaminhar(any(Chamado.class))).thenAnswer(invocation -> {
+            Chamado emTransito = invocation.getArgument(0);
+            assertEquals(StatusChamado.EM_ANALISE, emTransito.getStatus());
+            return "TRELLO-TESTE";
+        });
+
+        Chamado resultado = chamadoService.processarChamado(chamado);
+        assertEquals(StatusChamado.ENCAMINHADO, resultado.getStatus());
+        verify(chamadoRepository, times(3)).save(any(Chamado.class));
+    }
+    @Test
+    void deveTraduzirConflitoDoBancoAntesDeClassificar() {
+        Chamado chamado = criarChamadoTeste("TESTE-DUPLICADO");
+        when(chamadoRepository.findByTicketId(chamado.getTicketId()))
+                .thenReturn(Optional.empty(), Optional.of(chamado));
+        when(chamadoRepository.save(chamado))
+                .thenThrow(new DataIntegrityViolationException("Restrição de unicidade"));
+
+        assertThrows(ChamadoDuplicadoException.class, () -> chamadoService.processarChamado(chamado));
+
+        verifyNoInteractions(classificacaoService, encaminhamentoService);
     }
 }

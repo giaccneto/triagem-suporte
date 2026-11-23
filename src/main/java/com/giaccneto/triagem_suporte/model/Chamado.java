@@ -2,7 +2,6 @@ package com.giaccneto.triagem_suporte.model;
 
 import jakarta.persistence.*;
 
-
 @Entity
 public class Chamado {
 
@@ -12,6 +11,7 @@ public class Chamado {
     @Column(unique = true)
     private String ticketId;
     private String customerId;
+    @Column(columnDefinition = "text")
     private String message;
     @Enumerated(EnumType.STRING)
     private CategoriaChamado categoria;
@@ -19,24 +19,52 @@ public class Chamado {
     private PrioridadeChamado prioridade;
     @Enumerated(EnumType.STRING)
     private StatusChamado status;
+    @Column(columnDefinition = "text")
     private String justificativa;
     @Enumerated(EnumType.STRING)
     private EquipeDestino equipeDestino;
     private String idExterno;
 
-    public Chamado() {
+    protected Chamado() {
     }
 
-    public Chamado(Long id, String ticketId, String customerId, String message, CategoriaChamado categoria, PrioridadeChamado prioridade, StatusChamado status, String justificativa, EquipeDestino equipeDestino, String idExterno) {
+    public Chamado(String ticketId, String customerId, String message) {
         this.ticketId = ticketId;
         this.customerId = customerId;
         this.message = message;
-        this.categoria = categoria;
-        this.prioridade = prioridade;
-        this.status = status;
-        this.justificativa = justificativa;
-        this.equipeDestino = equipeDestino;
-        this.idExterno = idExterno;
+    }
+
+    public void registrarRecebimento() {
+        status = StatusChamado.RECEBIDO;
+    }
+
+    public void aplicarClassificacao(Classificacao classificacao) {
+        categoria = classificacao.categoria();
+        prioridade = classificacao.prioridade();
+        equipeDestino = classificacao.equipeDestino();
+        justificativa = classificacao.justificativa();
+        status = equipeDestino == EquipeDestino.REVISAO_HUMANA
+                ? StatusChamado.REVISAO_PENDENTE : StatusChamado.EM_ANALISE;
+    }
+
+    public void solicitarRevisao(String motivo) {
+        status = StatusChamado.REVISAO_PENDENTE;
+        equipeDestino = EquipeDestino.REVISAO_HUMANA;
+        prioridade = null;
+        justificativa = motivo;
+    }
+
+    public void registrarEncaminhamento(String idCartao) {
+        if (idCartao == null || idCartao.isBlank() || idCartao.length() > 255 || idCartao.indexOf(0) >= 0) {
+            throw new IllegalStateException("Identificador externo inválido");
+        }
+        idExterno = idCartao;
+        status = StatusChamado.ENCAMINHADO;
+    }
+
+    public void registrarFalhaDeEncaminhamento() {
+        idExterno = null;
+        status = StatusChamado.FALHA_ENCAMINHAMENTO;
     }
 
     public Long getId() {
@@ -47,71 +75,35 @@ public class Chamado {
         return ticketId;
     }
 
-    public void setTicketId(String ticketId) {
-        this.ticketId = ticketId;
-    }
-
     public String getCustomerId() {
         return customerId;
-    }
-
-    public void setCustomerId(String customerId) {
-        this.customerId = customerId;
     }
 
     public String getMessage() {
         return message;
     }
 
-    public void setMessage(String message) {
-        this.message = message;
-    }
-
     public CategoriaChamado getCategoria() {
         return categoria;
-    }
-
-    public void setCategoria(CategoriaChamado categoria) {
-        this.categoria = categoria;
     }
 
     public PrioridadeChamado getPrioridade() {
         return prioridade;
     }
 
-    public void setPrioridade(PrioridadeChamado prioridade) {
-        this.prioridade = prioridade;
-    }
-
     public StatusChamado getStatus() {
         return status;
-    }
-
-    public void setStatus(StatusChamado status) {
-        this.status = status;
     }
 
     public String getJustificativa() {
         return justificativa;
     }
 
-    public void setJustificativa(String justificativa) {
-        this.justificativa = justificativa;
-    }
-
     public EquipeDestino getEquipeDestino() {
         return equipeDestino;
     }
 
-    public void setEquipeDestino(EquipeDestino equipeDestino) {
-        this.equipeDestino = equipeDestino;
-    }
-
     public String getIdExterno() {
         return idExterno;
-    }
-
-    public void setIdExterno(String idExterno) {
-        this.idExterno = idExterno;
     }
 }

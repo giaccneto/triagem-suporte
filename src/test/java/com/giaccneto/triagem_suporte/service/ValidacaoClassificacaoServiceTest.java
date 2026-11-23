@@ -1,3 +1,5 @@
+package com.giaccneto.triagem_suporte.service;
+
 
 import com.giaccneto.triagem_suporte.dto.ClassificacaoResposta;
 import com.giaccneto.triagem_suporte.service.ValidacaoClassificacaoService;
@@ -17,7 +19,7 @@ public class ValidacaoClassificacaoServiceTest {
         ClassificacaoResposta resposta = new ClassificacaoResposta();
         resposta.setCategoria("DESCONHECIDA");
 
-        boolean resultado = service.validar(resposta);
+        boolean resultado = service.validar(resposta).isPresent();
 
         assertFalse(resultado);
     }
@@ -33,7 +35,7 @@ public class ValidacaoClassificacaoServiceTest {
         resposta.setRevisaoNecessaria(false);
         resposta.setJustificativa("Solicitação de segunda via de fatura.");
 
-        boolean resultado = service.validar(resposta);
+        boolean resultado = service.validar(resposta).isPresent();
 
         assertTrue(resultado);
     }
@@ -47,7 +49,7 @@ public class ValidacaoClassificacaoServiceTest {
         resposta.setEquipeDestino("REVISAO_HUMANA");
         resposta.setRevisaoNecessaria(true);
 
-        boolean resultado = service.validar(resposta);
+        boolean resultado = service.validar(resposta).isPresent();
 
         assertTrue(resultado);
     }
@@ -62,7 +64,7 @@ public class ValidacaoClassificacaoServiceTest {
         resposta.setEquipeDestino("TECNICO");
         resposta.setRevisaoNecessaria(false);
 
-        boolean resultado = service.validar(resposta);
+        boolean resultado = service.validar(resposta).isPresent();
 
         assertFalse(resultado);
     }

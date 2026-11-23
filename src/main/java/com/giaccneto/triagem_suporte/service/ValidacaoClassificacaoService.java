@@ -1,78 +1,55 @@
-
 package com.giaccneto.triagem_suporte.service;
 
 import com.giaccneto.triagem_suporte.dto.ClassificacaoResposta;
-import com.giaccneto.triagem_suporte.model.CategoriaChamado;
-import com.giaccneto.triagem_suporte.model.EquipeDestino;
-import com.giaccneto.triagem_suporte.model.PrioridadeChamado;
+import com.giaccneto.triagem_suporte.model.*;
 import org.springframework.stereotype.Service;
+
+import java.util.Optional;
 
 @Service
 public class ValidacaoClassificacaoService {
 
-    public boolean validar(ClassificacaoResposta resposta) {
-
-        if (resposta == null ||
-                resposta.getRevisaoNecessaria() == null) {
-            return false;
+    public Optional<Classificacao> validar(ClassificacaoResposta resposta) {
+        if (resposta == null || resposta.getRevisaoNecessaria() == null) {
+            return Optional.empty();
         }
-
-        CategoriaChamado categoria;
-        EquipeDestino equipe;
 
         try {
-            categoria = CategoriaChamado.valueOf(
-                    resposta.getCategoria()
-            );
+            return validarValores(resposta);
+        } catch (IllegalArgumentException | NullPointerException exception) {
+            return Optional.empty();
+        }
+    }
 
-            equipe = EquipeDestino.valueOf(
-                    resposta.getEquipeDestino()
-            );
-
-        } catch (IllegalArgumentException |
-                 NullPointerException e) {
-            return false;
+    private Optional<Classificacao> validarValores(ClassificacaoResposta resposta) {
+        var categoria = CategoriaChamado.valueOf(resposta.getCategoria());
+        var equipe = EquipeDestino.valueOf(resposta.getEquipeDestino());
+        String justificativa = resposta.getJustificativa();
+        if (justificativa != null && (justificativa.length() > 2000 || justificativa.indexOf(0) >= 0)) {
+            return Optional.empty();
         }
 
-        // Revisão humana
-        if (Boolean.TRUE.equals(resposta.getRevisaoNecessaria())) {
-            return equipe == EquipeDestino.REVISAO_HUMANA
-                    && resposta.getPrioridade() == null;
+        if (resposta.getRevisaoNecessaria()) {
+            if (equipe != EquipeDestino.REVISAO_HUMANA || resposta.getPrioridade() != null) {
+                return Optional.empty();
+            }
+            return Optional.of(new Classificacao(categoria, null, equipe, justificativa));
         }
 
-        // Classificação automática exige justificativa
-        if (resposta.getJustificativa() == null ||
-                resposta.getJustificativa().isBlank()) {
-            return false;
+        var prioridade = PrioridadeChamado.valueOf(resposta.getPrioridade());
+        if (justificativa == null || justificativa.isBlank()
+                || (prioridade == PrioridadeChamado.ALTA && categoria != CategoriaChamado.PROBLEMA_TECNICO)
+                || equipe != equipeDaCategoria(categoria)) {
+            return Optional.empty();
         }
+        return Optional.of(new Classificacao(categoria, prioridade, equipe, justificativa));
+    }
 
-        PrioridadeChamado prioridade;
-
-        try {
-            prioridade = PrioridadeChamado.valueOf(
-                    resposta.getPrioridade()
-            );
-        } catch (IllegalArgumentException |
-                 NullPointerException e) {
-            return false;
-        }
-
-        // Prioridade ALTA somente para problemas técnicos
-        if (prioridade == PrioridadeChamado.ALTA &&
-                categoria != CategoriaChamado.PROBLEMA_TECNICO) {
-            return false;
-        }
-
-        // Verifica a equipe correta
+    private EquipeDestino equipeDaCategoria(CategoriaChamado categoria) {
         return switch (categoria) {
-            case COBRANCA ->
-                    equipe == EquipeDestino.FINANCEIRO;
-
-            case PROBLEMA_TECNICO ->
-                    equipe == EquipeDestino.TECNICO;
-
-            case OUTRO ->
-                    equipe == EquipeDestino.REVISAO_HUMANA;
+            case COBRANCA -> EquipeDestino.FINANCEIRO;
+            case PROBLEMA_TECNICO -> EquipeDestino.TECNICO;
+            case OUTRO -> EquipeDestino.REVISAO_HUMANA;
         };
     }
 }

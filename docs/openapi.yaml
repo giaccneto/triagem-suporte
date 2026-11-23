@@ -1,0 +1,112 @@
+openapi: 3.1.0
+info:
+  title: Triagem de Suporte
+  version: 0.0.1
+paths:
+  /chamados:
+    post:
+      operationId: criarChamado
+      summary: Registra e processa um chamado
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CriarChamado'
+      responses:
+        '201':
+          description: Chamado registrado, com o resultado do processamento
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Chamado'
+        '400':
+          $ref: '#/components/responses/Erro'
+        '409':
+          $ref: '#/components/responses/Erro'
+  /chamados/{ticketId}:
+    get:
+      operationId: consultarChamado
+      summary: Consulta um chamado registrado
+      parameters:
+        - in: path
+          name: ticketId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Chamado encontrado
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Chamado'
+        '404':
+          $ref: '#/components/responses/Erro'
+components:
+  headers:
+    RequestId:
+      description: Identificador de correlação gerado pelo servidor
+      schema:
+        type: string
+        format: uuid
+  responses:
+    Erro:
+      description: Dados inválidos, ticket duplicado ou chamado inexistente
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+  schemas:
+    CriarChamado:
+      type: object
+      required: [ticketId, customerId, message]
+      properties:
+        ticketId:
+          type: string
+          minLength: 1
+          maxLength: 255
+        customerId:
+          type: string
+          minLength: 1
+          maxLength: 255
+        message:
+          type: string
+          minLength: 1
+          maxLength: 10000
+    Chamado:
+      type: object
+      properties:
+        ticketId:
+          type: string
+        categoria:
+          enum: [COBRANCA, PROBLEMA_TECNICO, OUTRO, null]
+        prioridade:
+          enum: [NORMAL, ALTA, null]
+        status:
+          enum: [RECEBIDO, EM_ANALISE, REVISAO_PENDENTE, ENCAMINHADO, FALHA_ENCAMINHAMENTO]
+        justificativa:
+          type: [string, 'null']
+        equipeDestino:
+          enum: [FINANCEIRO, TECNICO, REVISAO_HUMANA, null]
+        idExterno:
+          type: [string, 'null']
+    Erro:
+      type: object
+      required: [erro]
+      properties:
+        erro:
+          type: string
+        campos:
+          type: object
+          additionalProperties:
+            type: string

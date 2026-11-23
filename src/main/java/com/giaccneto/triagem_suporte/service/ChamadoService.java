@@ -1,35 +1,31 @@
-
 package com.giaccneto.triagem_suporte.service;
 
 import com.giaccneto.triagem_suporte.dto.ClassificacaoResposta;
 import com.giaccneto.triagem_suporte.exception.ChamadoDuplicadoException;
-import com.giaccneto.triagem_suporte.model.CategoriaChamado;
 import com.giaccneto.triagem_suporte.model.Chamado;
-import com.giaccneto.triagem_suporte.model.EquipeDestino;
-import com.giaccneto.triagem_suporte.model.PrioridadeChamado;
 import com.giaccneto.triagem_suporte.model.StatusChamado;
 import com.giaccneto.triagem_suporte.repository.ChamadoRepository;
-import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.stereotype.Service;
 
 import java.util.Optional;
 
 @Service
 public class ChamadoService {
-    private static final Logger log =
-            LoggerFactory.getLogger(ChamadoService.class);
+
+    private static final Logger log = LoggerFactory.getLogger(ChamadoService.class);
 
     private final ChamadoRepository chamadoRepository;
     private final ClassificacaoService classificacaoService;
     private final ValidacaoClassificacaoService validacaoClassificacaoService;
     private final EncaminhamentoService encaminhamentoService;
 
-    public ChamadoService(
-            ChamadoRepository chamadoRepository,
-            ClassificacaoService classificacaoService,
-            ValidacaoClassificacaoService validacaoClassificacaoService, EncaminhamentoService encaminhamentoService) {
-
+    public ChamadoService(ChamadoRepository chamadoRepository,
+                         ClassificacaoService classificacaoService,
+                         ValidacaoClassificacaoService validacaoClassificacaoService,
+                         EncaminhamentoService encaminhamentoService) {
         this.chamadoRepository = chamadoRepository;
         this.classificacaoService = classificacaoService;
         this.validacaoClassificacaoService = validacaoClassificacaoService;
@@ -37,33 +33,31 @@ public class ChamadoService {
     }
 
     public Chamado save(Chamado chamado) {
-
         if (chamado == null) {
-            throw new IllegalArgumentException(
-                    "O chamado não pode ser nulo!");
+            throw new IllegalArgumentException("O chamado não pode ser nulo!");
+        }
+        if (chamado.getMessage() == null || chamado.getMessage().isBlank()) {
+            throw new IllegalArgumentException("A mensagem do chamado não pode estar vazia!");
+        }
+        String ticketId = chamado.getTicketId();
+        if (ticketId == null || ticketId.isBlank()) {
+            throw new IllegalArgumentException("O ticketId não pode estar vazio!");
+        }
+        if (chamadoRepository.findByTicketId(ticketId).isPresent()) {
+            throw new ChamadoDuplicadoException("Já existe um chamado com este ticketId: ");
         }
 
-        if (chamado.getMessage() == null ||
-                chamado.getMessage().isBlank()) {
-            throw new IllegalArgumentException(
-                    "A mensagem do chamado não pode estar vazia!");
+        chamado.registrarRecebimento();
+        try {
+            return chamadoRepository.save(chamado);
+        } catch (DataIntegrityViolationException exception) {
+            // A consulta anterior nao protege contra duas requisicoes simultaneas.
+            // O indice unico do banco continua sendo a protecao definitiva.
+            if (chamadoRepository.findByTicketId(ticketId).isPresent()) {
+                throw new ChamadoDuplicadoException("Já existe um chamado com este ticketId: ");
+            }
+            throw exception;
         }
-
-        String ticket = chamado.getTicketId();
-
-        if (ticket == null || ticket.isBlank()) {
-            throw new IllegalArgumentException(
-                    "O ticketId não pode estar vazio!");
-        }
-
-        if (chamadoRepository.findByTicketId(ticket).isPresent()) {
-            throw new ChamadoDuplicadoException(
-                    "Já existe um chamado com este ticketId: " + ticket);
-        }
-
-        chamado.setStatus(StatusChamado.RECEBIDO);
-
-        return chamadoRepository.save(chamado);
     }
 
     public Optional<Chamado> buscarPorTicketId(String ticketId) {
@@ -71,80 +65,41 @@ public class ChamadoService {
     }
 
     public Chamado processarChamado(Chamado chamado) {
-
         Chamado chamadoSalvo = save(chamado);
 
-        ClassificacaoResposta resposta;
+        final ClassificacaoResposta resposta;
+        try {
+            resposta = classificacaoService.classificar(chamadoSalvo.getMessage());
+        } catch (RuntimeException exception) {
+            log.warn("classificacao_falhou chamadoId={} causa={}",
+                    chamadoSalvo.getId(), exception.getClass().getSimpleName());
+            return marcarRevisao(chamadoSalvo, "Falha na classificação automática. Revisão necessária.");
+        }
+
+        var classificacao = validacaoClassificacaoService.validar(resposta);
+        if (classificacao.isEmpty()) {
+            log.warn("classificacao_invalida chamadoId={}", chamadoSalvo.getId());
+            return marcarRevisao(chamadoSalvo, "Classificação inválida. Revisão humana necessária.");
+        }
+
+        chamadoSalvo.aplicarClassificacao(classificacao.orElseThrow());
+        chamadoSalvo = chamadoRepository.save(chamadoSalvo);
+        if (chamadoSalvo.getStatus() == StatusChamado.REVISAO_PENDENTE) {
+            return chamadoSalvo;
+        }
 
         try {
-            resposta = classificacaoService.classificar(
-                    chamadoSalvo.getMessage()
-            );
-        } catch (Exception e) {
-            chamadoSalvo.setStatus(StatusChamado.REVISAO_PENDENTE);
-            chamadoSalvo.setJustificativa(
-                    "Falha na classificação automática. Revisão necessária."
-            );
-
-            return chamadoRepository.save(chamadoSalvo);
+            chamadoSalvo.registrarEncaminhamento(encaminhamentoService.encaminhar(chamadoSalvo));
+        } catch (RuntimeException exception) {
+            log.warn("encaminhamento_falhou chamadoId={} causa={}",
+                    chamadoSalvo.getId(), exception.getClass().getSimpleName());
+            chamadoSalvo.registrarFalhaDeEncaminhamento();
         }
-        System.out.println("Categoria IA: " + resposta.getCategoria());
-        System.out.println("Prioridade IA: " + resposta.getPrioridade());
-        System.out.println("Equipe IA: " + resposta.getEquipeDestino());
-        System.out.println("Revisão IA: " + resposta.getRevisaoNecessaria());
-
-        boolean classificacaoValida =
-                validacaoClassificacaoService.validar(resposta);
-
-        if (!classificacaoValida) {
-            chamadoSalvo.setStatus(StatusChamado.REVISAO_PENDENTE);
-            chamadoSalvo.setJustificativa(
-                    "Classificação inválida. Revisão humana necessária."
-            );
-
-            return chamadoRepository.save(chamadoSalvo);
-        }
-
-        chamadoSalvo.setCategoria(
-                CategoriaChamado.valueOf(resposta.getCategoria())
-        );
-
-        if (resposta.getPrioridade() != null) {
-            chamadoSalvo.setPrioridade(
-                    PrioridadeChamado.valueOf(resposta.getPrioridade())
-            );
-        }
-
-        chamadoSalvo.setEquipeDestino(
-                EquipeDestino.valueOf(resposta.getEquipeDestino())
-        );
-
-        chamadoSalvo.setJustificativa(resposta.getJustificativa());
-
-        // 8. Define o status
-        if (Boolean.TRUE.equals(resposta.getRevisaoNecessaria())
-                || EquipeDestino.REVISAO_HUMANA.equals(
-                chamadoSalvo.getEquipeDestino())) {
-
-            chamadoSalvo.setStatus(StatusChamado.REVISAO_PENDENTE);
-
-        } else {
-            chamadoSalvo.setStatus(StatusChamado.EM_ANALISE);
-
-            try {
-                String idExterno = encaminhamentoService.encaminhar(chamadoSalvo);
-
-                chamadoSalvo.setIdExterno(idExterno);
-                chamadoSalvo.setStatus(StatusChamado.ENCAMINHADO);
-
-            } catch (Exception e) {
-                log.error("Falha ao encaminhar chamado com ticketId: {}",
-                        chamadoSalvo.getTicketId(), e);
-
-                chamadoSalvo.setStatus(StatusChamado.FALHA_ENCAMINHAMENTO);
-            }
-        }
-
         return chamadoRepository.save(chamadoSalvo);
+    }
+
+    private Chamado marcarRevisao(Chamado chamado, String justificativa) {
+        chamado.solicitarRevisao(justificativa);
+        return chamadoRepository.save(chamado);
     }
 }
