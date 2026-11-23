@@ -19,15 +19,17 @@ public class ChamadoService {
     private final ChamadoRepository chamadoRepository;
     private final ClassificacaoService classificacaoService;
     private final ValidacaoClassificacaoService validacaoClassificacaoService;
+    private final EncaminhamentoService encaminhamentoService;
 
     public ChamadoService(
             ChamadoRepository chamadoRepository,
             ClassificacaoService classificacaoService,
-            ValidacaoClassificacaoService validacaoClassificacaoService) {
+            ValidacaoClassificacaoService validacaoClassificacaoService, EncaminhamentoService encaminhamentoService) {
 
         this.chamadoRepository = chamadoRepository;
         this.classificacaoService = classificacaoService;
         this.validacaoClassificacaoService = validacaoClassificacaoService;
+        this.encaminhamentoService = encaminhamentoService;
     }
 
     public Chamado save(Chamado chamado) {
@@ -66,10 +68,8 @@ public class ChamadoService {
 
     public Chamado processarChamado(Chamado chamado) {
 
-        // 1. Registra o chamado
         Chamado chamadoSalvo = save(chamado);
 
-        // 2. Consulta a IA
         ClassificacaoResposta resposta;
 
         try {
@@ -89,7 +89,6 @@ public class ChamadoService {
         System.out.println("Equipe IA: " + resposta.getEquipeDestino());
         System.out.println("Revisão IA: " + resposta.getRevisaoNecessaria());
 
-        // 3. Valida a resposta da IA
         boolean classificacaoValida =
                 validacaoClassificacaoService.validar(resposta);
 
@@ -102,24 +101,20 @@ public class ChamadoService {
             return chamadoRepository.save(chamadoSalvo);
         }
 
-        // 4. Salva a categoria
         chamadoSalvo.setCategoria(
                 CategoriaChamado.valueOf(resposta.getCategoria())
         );
 
-        // 5. Salva a prioridade, quando informada
         if (resposta.getPrioridade() != null) {
             chamadoSalvo.setPrioridade(
                     PrioridadeChamado.valueOf(resposta.getPrioridade())
             );
         }
 
-        // 6. Salva a equipe de destino
         chamadoSalvo.setEquipeDestino(
                 EquipeDestino.valueOf(resposta.getEquipeDestino())
         );
 
-        // 7. Salva a justificativa
         chamadoSalvo.setJustificativa(resposta.getJustificativa());
 
         // 8. Define o status
@@ -131,9 +126,18 @@ public class ChamadoService {
 
         } else {
             chamadoSalvo.setStatus(StatusChamado.EM_ANALISE);
+
+            try {
+                String idExterno = encaminhamentoService.encaminhar(chamadoSalvo);
+
+                chamadoSalvo.setIdExterno(idExterno);
+                chamadoSalvo.setStatus(StatusChamado.ENCAMINHADO);
+
+            } catch (Exception e) {
+                chamadoSalvo.setStatus(StatusChamado.FALHA_ENCAMINHAMENTO);
+            }
         }
 
-        // 9. Atualiza o registro no banco
         return chamadoRepository.save(chamadoSalvo);
     }
 }
