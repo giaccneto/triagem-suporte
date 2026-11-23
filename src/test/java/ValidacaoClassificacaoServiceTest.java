@@ -26,10 +26,12 @@ public class ValidacaoClassificacaoServiceTest {
     void deveAceitarClassificacaoValida() {
 
         ClassificacaoResposta resposta = new ClassificacaoResposta();
+
         resposta.setCategoria("COBRANCA");
         resposta.setPrioridade("NORMAL");
         resposta.setEquipeDestino("FINANCEIRO");
         resposta.setRevisaoNecessaria(false);
+        resposta.setJustificativa("Solicitação de segunda via de fatura.");
 
         boolean resultado = service.validar(resposta);
 

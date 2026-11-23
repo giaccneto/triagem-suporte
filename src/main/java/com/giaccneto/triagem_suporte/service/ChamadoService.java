@@ -10,11 +10,15 @@ import com.giaccneto.triagem_suporte.model.PrioridadeChamado;
 import com.giaccneto.triagem_suporte.model.StatusChamado;
 import com.giaccneto.triagem_suporte.repository.ChamadoRepository;
 import org.springframework.stereotype.Service;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Optional;
 
 @Service
 public class ChamadoService {
+    private static final Logger log =
+            LoggerFactory.getLogger(ChamadoService.class);
 
     private final ChamadoRepository chamadoRepository;
     private final ClassificacaoService classificacaoService;
@@ -134,6 +138,9 @@ public class ChamadoService {
                 chamadoSalvo.setStatus(StatusChamado.ENCAMINHADO);
 
             } catch (Exception e) {
+                log.error("Falha ao encaminhar chamado com ticketId: {}",
+                        chamadoSalvo.getTicketId(), e);
+
                 chamadoSalvo.setStatus(StatusChamado.FALHA_ENCAMINHAMENTO);
             }
         }
