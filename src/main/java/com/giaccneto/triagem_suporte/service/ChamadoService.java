@@ -2,7 +2,8 @@ package com.giaccneto.triagem_suporte.service;
 
 import com.giaccneto.triagem_suporte.dto.ClassificacaoResposta;
 import com.giaccneto.triagem_suporte.exception.ChamadoDuplicadoException;
-import com.giaccneto.triagem_suporte.model.*;
+import com.giaccneto.triagem_suporte.model.Chamado;
+import com.giaccneto.triagem_suporte.model.StatusChamado;
 import com.giaccneto.triagem_suporte.repository.ChamadoRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -43,17 +44,17 @@ public class ChamadoService {
             throw new IllegalArgumentException("O ticketId não pode estar vazio!");
         }
         if (chamadoRepository.findByTicketId(ticketId).isPresent()) {
-            throw new ChamadoDuplicadoException("Já existe um chamado com este ticketId: " + ticketId);
+            throw new ChamadoDuplicadoException("Já existe um chamado com este ticketId: ");
         }
 
-        chamado.setStatus(StatusChamado.RECEBIDO);
+        chamado.registrarRecebimento();
         try {
             return chamadoRepository.save(chamado);
         } catch (DataIntegrityViolationException exception) {
             // A consulta anterior nao protege contra duas requisicoes simultaneas.
             // O indice unico do banco continua sendo a protecao definitiva.
             if (chamadoRepository.findByTicketId(ticketId).isPresent()) {
-                throw new ChamadoDuplicadoException("Já existe um chamado com este ticketId: " + ticketId);
+                throw new ChamadoDuplicadoException("Já existe um chamado com este ticketId: ");
             }
             throw exception;
         }
@@ -69,56 +70,36 @@ public class ChamadoService {
         final ClassificacaoResposta resposta;
         try {
             resposta = classificacaoService.classificar(chamadoSalvo.getMessage());
-        } catch (Exception exception) {
-            log.warn("Classificação automática falhou para ticketId={}", chamadoSalvo.getTicketId(), exception);
+        } catch (RuntimeException exception) {
+            log.warn("classificacao_falhou chamadoId={} causa={}",
+                    chamadoSalvo.getId(), exception.getClass().getSimpleName());
             return marcarRevisao(chamadoSalvo, "Falha na classificação automática. Revisão necessária.");
         }
 
-        // A saida de modelos de IA nao e confiavel ate passar pela validacao.
-        if (resposta == null || !validacaoClassificacaoService.validar(resposta)) {
-            log.warn("Classificação inválida ou ausente para ticketId={}", chamadoSalvo.getTicketId());
+        var classificacao = validacaoClassificacaoService.validar(resposta);
+        if (classificacao.isEmpty()) {
+            log.warn("classificacao_invalida chamadoId={}", chamadoSalvo.getId());
             return marcarRevisao(chamadoSalvo, "Classificação inválida. Revisão humana necessária.");
         }
 
-        // Converter somente valores ja validados, evitando acesso a enums invalidos.
-        chamadoSalvo.setCategoria(CategoriaChamado.valueOf(resposta.getCategoria()));
-        chamadoSalvo.setPrioridade(resposta.getPrioridade() == null
-                ? null : PrioridadeChamado.valueOf(resposta.getPrioridade()));
-        chamadoSalvo.setEquipeDestino(EquipeDestino.valueOf(resposta.getEquipeDestino()));
-        chamadoSalvo.setJustificativa(resposta.getJustificativa());
-
-        if (Boolean.TRUE.equals(resposta.getRevisaoNecessaria())
-                || chamadoSalvo.getEquipeDestino() == EquipeDestino.REVISAO_HUMANA) {
-            chamadoSalvo.setStatus(StatusChamado.REVISAO_PENDENTE);
-            return chamadoRepository.save(chamadoSalvo);
+        chamadoSalvo.aplicarClassificacao(classificacao.orElseThrow());
+        chamadoSalvo = chamadoRepository.save(chamadoSalvo);
+        if (chamadoSalvo.getStatus() == StatusChamado.REVISAO_PENDENTE) {
+            return chamadoSalvo;
         }
 
-        chamadoSalvo.setStatus(StatusChamado.EM_ANALISE);
-        // Persistir o estado intermediario antes da chamada externa; em uma
-        // evolucao futura, uma fila/outbox tratara retries e reconciliacao.
-        chamadoSalvo = chamadoRepository.save(chamadoSalvo);
-
         try {
-            String idExterno = encaminhamentoService.encaminhar(chamadoSalvo);
-            if (idExterno == null || idExterno.isBlank()) {
-                throw new IllegalStateException("Encaminhamento sem identificador externo");
-            }
-            chamadoSalvo.setIdExterno(idExterno);
-            chamadoSalvo.setStatus(StatusChamado.ENCAMINHADO);
-        } catch (Exception exception) {
-            // A falha pode ocorrer apos o sistema externo criar o cartao.
-            // Nao tentar novamente automaticamente sem reconciliacao.
-            log.error("Falha no encaminhamento de ticketId={}", chamadoSalvo.getTicketId(), exception);
-            chamadoSalvo.setStatus(StatusChamado.FALHA_ENCAMINHAMENTO);
+            chamadoSalvo.registrarEncaminhamento(encaminhamentoService.encaminhar(chamadoSalvo));
+        } catch (RuntimeException exception) {
+            log.warn("encaminhamento_falhou chamadoId={} causa={}",
+                    chamadoSalvo.getId(), exception.getClass().getSimpleName());
+            chamadoSalvo.registrarFalhaDeEncaminhamento();
         }
         return chamadoRepository.save(chamadoSalvo);
     }
 
     private Chamado marcarRevisao(Chamado chamado, String justificativa) {
-        chamado.setStatus(StatusChamado.REVISAO_PENDENTE);
-        chamado.setEquipeDestino(EquipeDestino.REVISAO_HUMANA);
-        chamado.setPrioridade(null);
-        chamado.setJustificativa(justificativa);
+        chamado.solicitarRevisao(justificativa);
         return chamadoRepository.save(chamado);
     }
 }

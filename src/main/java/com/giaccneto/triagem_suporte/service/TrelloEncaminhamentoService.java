@@ -1,78 +1,109 @@
 package com.giaccneto.triagem_suporte.service;
 
+import com.giaccneto.triagem_suporte.config.TrelloProperties;
 import com.giaccneto.triagem_suporte.model.Chamado;
-import com.giaccneto.triagem_suporte.model.EquipeDestino;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 
+import java.net.http.HttpClient;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+import java.util.List;
 import java.util.Map;
-
+import java.util.Optional;
 
 @Service
+@EnableConfigurationProperties(TrelloProperties.class)
 public class TrelloEncaminhamentoService implements EncaminhamentoService {
 
-    @Value("${TRELLO_API_KEY}")
-    private String apiKey;
+    private static final Logger log = LoggerFactory.getLogger(TrelloEncaminhamentoService.class);
+    private final RestClient cliente;
+    private final TrelloProperties.Lists listas;
 
-    @Value("${TRELLO_TOKEN}")
-    private String token;
-
-    @Value("${trello.lists.financeiro}")
-    private String listaFinanceiro;
-
-    @Value("${trello.lists.tecnico}")
-    private String listaTecnico;
-
-    @Value("${trello.lists.revisao-humana}")
-    private String listaRevisaoHumana;
-
+    public TrelloEncaminhamentoService(TrelloProperties propriedades) {
+        var http = HttpClient.newBuilder()
+                .connectTimeout(propriedades.connectTimeout())
+                .build();
+        var factory = new JdkClientHttpRequestFactory(http);
+        factory.setReadTimeout(propriedades.readTimeout());
+        cliente = RestClient.builder()
+                .baseUrl(propriedades.baseUrl().toString())
+                .requestFactory(factory)
+                .defaultHeader(HttpHeaders.AUTHORIZATION,
+                        "OAuth oauth_consumer_key=\"%s\", oauth_token=\"%s\""
+                                .formatted(propriedades.apiKey(), propriedades.token()))
+                .build();
+        listas = propriedades.lists();
+    }
 
     @Override
     public String encaminhar(Chamado chamado) {
-
-        if (chamado == null || chamado.getEquipeDestino() == null) {
-            throw new IllegalArgumentException(
-                    "Chamado ou equipe de destino inválida"
-            );
-        }
-
-        String idLista = obterIdLista(chamado.getEquipeDestino());
-
-        String nomeCartao = chamado.getTicketId()
-                + " - " + chamado.getCategoria();
-
-        Map resposta = restClient.post()
-                .uri(uriBuilder -> uriBuilder
-                        .path("/cards")
-                        .queryParam("key", apiKey)
-                        .queryParam("token", token)
-                        .queryParam("idList", idLista)
-                        .queryParam("name", nomeCartao)
-                        .build())
-                .retrieve()
-                .body(Map.class);
-
-        if (resposta == null || resposta.get("id") == null) {
-            throw new IllegalStateException(
-                    "Trello não confirmou a criação do cartão"
-            );
-        }
-
-        return resposta.get("id").toString();
-    }
-
-
-    private String obterIdLista(EquipeDestino equipe) {
-
-        return switch (equipe) {
-            case FINANCEIRO -> listaFinanceiro;
-            case TECNICO -> listaTecnico;
-            case REVISAO_HUMANA -> listaRevisaoHumana;
+        String lista = switch (chamado.getEquipeDestino()) {
+            case FINANCEIRO -> listas.financeiro();
+            case TECNICO -> listas.tecnico();
+            case REVISAO_HUMANA -> listas.revisaoHumana();
         };
+        String nome = chamado.getTicketId() + " - " + chamado.getCategoria();
+        String marcador = "triagem-ticket:" + Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(chamado.getTicketId().getBytes(StandardCharsets.UTF_8));
+
+        try {
+            var resposta = cliente.post()
+                    .uri("/cards")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("idList", lista, "name", nome, "desc", marcador))
+                    .retrieve()
+                    .toEntity(Cartao.class);
+            if (resposta.getStatusCode().is2xxSuccessful() && possuiId(resposta.getBody())) {
+                return resposta.getBody().id();
+            }
+        } catch (RestClientResponseException exception) {
+            if (exception.getStatusCode().is4xxClientError()
+                    && exception.getStatusCode().value() != 408) {
+                throw exception;
+            }
+        } catch (RestClientException exception) {
+            // O servidor pode ter recebido o POST antes da falha.
+        }
+
+        String id = reconciliar(lista, marcador)
+                .orElseThrow(() -> new IllegalStateException("Trello não confirmou a criação do cartão"));
+        log.info("encaminhamento_reconciliado chamadoId={}", chamado.getId());
+        return id;
     }
 
-    private final RestClient restClient = RestClient.create(
-            "https://api.trello.com/1"
-    );
+    private Optional<String> reconciliar(String lista, String marcador) {
+        List<Cartao> resposta = cliente.get()
+                .uri(builder -> builder.path("/lists/{id}/cards")
+                        .queryParam("fields", "id,desc")
+                        .build(lista))
+                .retrieve()
+                .body(new ParameterizedTypeReference<List<Cartao>>() {});
+        if (resposta == null) {
+            return Optional.empty();
+        }
+        var correspondencias = resposta.stream()
+                .filter(cartao -> cartao != null && marcador.equals(cartao.desc()))
+                .limit(2)
+                .toList();
+        return correspondencias.size() == 1 && possuiId(correspondencias.get(0))
+                ? Optional.of(correspondencias.get(0).id()) : Optional.empty();
+    }
+
+    private boolean possuiId(Cartao cartao) {
+        return cartao != null && cartao.id() != null && !cartao.id().isBlank()
+                && cartao.id().length() <= 255 && cartao.id().indexOf(0) < 0;
+    }
+
+    private record Cartao(String id, String desc) {
+    }
 }
