@@ -211,4 +211,51 @@ class ChamadoServiceTest {
         verify(encaminhamentoService, never())
                 .encaminhar(any(Chamado.class));
     }
+
+    @Test
+    void deveEnviarParaRevisaoQuandoIaRetornaNull() {
+        Chamado chamado = criarChamadoTeste("TESTE-IA-NULL-001");
+        simularRepositorio(chamado.getTicketId());
+        when(classificacaoService.classificar(chamado.getMessage())).thenReturn(null);
+
+        Chamado resultado = chamadoService.processarChamado(chamado);
+
+        assertEquals(StatusChamado.REVISAO_PENDENTE, resultado.getStatus());
+        assertEquals(com.giaccneto.triagem_suporte.model.EquipeDestino.REVISAO_HUMANA,
+                resultado.getEquipeDestino());
+        verify(encaminhamentoService, never()).encaminhar(any(Chamado.class));
+    }
+
+    @Test
+    void deveMarcarFalhaSeIntegracaoNaoRetornarId() {
+        Chamado chamado = criarChamadoTeste("TESTE-ID-VAZIO-001");
+        ClassificacaoResposta resposta = criarClassificacaoValida();
+        simularRepositorio(chamado.getTicketId());
+        when(classificacaoService.classificar(chamado.getMessage())).thenReturn(resposta);
+        when(validacaoClassificacaoService.validar(resposta)).thenReturn(true);
+        when(encaminhamentoService.encaminhar(any(Chamado.class))).thenReturn("");
+
+        Chamado resultado = chamadoService.processarChamado(chamado);
+
+        assertEquals(StatusChamado.FALHA_ENCAMINHAMENTO, resultado.getStatus());
+        assertNull(resultado.getIdExterno());
+    }
+
+    @Test
+    void devePreservarStatusIntermediarioAntesDoEncaminhamento() {
+        Chamado chamado = criarChamadoTeste("TESTE-ESTADO-001");
+        ClassificacaoResposta resposta = criarClassificacaoValida();
+        simularRepositorio(chamado.getTicketId());
+        when(classificacaoService.classificar(chamado.getMessage())).thenReturn(resposta);
+        when(validacaoClassificacaoService.validar(resposta)).thenReturn(true);
+        when(encaminhamentoService.encaminhar(any(Chamado.class))).thenAnswer(invocation -> {
+            Chamado emTransito = invocation.getArgument(0);
+            assertEquals(StatusChamado.EM_ANALISE, emTransito.getStatus());
+            return "TRELLO-TESTE";
+        });
+
+        Chamado resultado = chamadoService.processarChamado(chamado);
+        assertEquals(StatusChamado.ENCAMINHADO, resultado.getStatus());
+        verify(chamadoRepository, times(3)).save(any(Chamado.class));
+    }
 }
